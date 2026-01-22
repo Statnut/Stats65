@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hockey Stat Sheet</title>
+
+<style>
+body { font-family: system-ui; margin:0 }
+nav { display:flex; background:#111; color:white }
+nav button { flex:1; padding:12px; border:none; background:none; color:white }
+nav button.active { background:#333 }
+section { display:none; padding:12px }
+section.active { display:block }
+input, select, button, textarea { margin:4px 0; padding:6px }
+.box { border:1px solid #ccc; padding:10px; margin-bottom:10px }
+.locked { opacity:.6; pointer-events:none }
+table { width:100%; border-collapse:collapse }
+td, th { border-bottom:1px solid #ddd; padding:4px }
+</style>
+</head>
+
+<body>
+
+<nav>
+  <button data-tab="game" class="active">Game</button>
+  <button data-tab="box">Box Score</button>
+  <button data-tab="seasons">Seasons</button>
+  <button data-tab="teams">Teams</button>
+</nav>
+
+<!-- GAME -->
+<section id="game" class="active">
+  <h3 id="gameStatus"></h3>
+
+  <div class="box">
+    <h4>Game Setup</h4>
+    Home Team:
+    <select id="homeTeam"></select>
+    Goalie:
+    <select id="homeGoalie"></select><br>
+
+    Away Team:
+    <select id="awayTeam"></select>
+    Goalie:
+    <select id="awayGoalie"></select>
+  </div>
+
+  <div class="box">
+    <h2 id="clock">20:00</h2>
+    <button id="clockToggle">Start / Stop</button>
+    <button id="advancePeriod">Advance Period</button>
+    <button id="endGame">End Game</button>
+  </div>
+
+  <div class="box">
+    <h4>Notes</h4>
+    <textarea id="gameNotes"></textarea>
+  </div>
+</section>
+
+<!-- BOX SCORE -->
+<section id="box">
+  <h3 id="finalScore"></h3>
+  <h4>Notes</h4>
+  <div id="boxNotes"></div>
+
+  <button id="finalizeBox">Finalize Box Score</button>
+  <button id="startNewGame" style="display:none">Start New Game</button>
+</section>
+
+<!-- SEASONS -->
+<section id="seasons">
+  <h3>Seasons</h3>
+  <input id="newSeason" placeholder="2025–26">
+  <button id="addSeason">Add Season</button>
+  <ul id="seasonList"></ul>
+</section>
+
+<!-- TEAMS -->
+<section id="teams">
+  <h3>Teams</h3>
+  <input id="teamName" placeholder="Team Name">
+  <input id="teamAbbr" placeholder="Abbr">
+  <button id="addTeam">Add Team</button>
+
+  <div id="teamList"></div>
+</section>
+
+<script>
+const $ = id => document.getElementById(id);
+const LS = localStorage;
+
+/* ---------- DATA ---------- */
+let seasons = JSON.parse(LS.getItem("seasons") || "[]");
+let teams = JSON.parse(LS.getItem("teams") || "[]");
+let activeSeason = LS.getItem("activeSeason") || null;
+
+let state = JSON.parse(LS.getItem("activeGame")) || {
+  game:{
+    homeTeam:null, awayTeam:null,
+    homeGoalie:null, awayGoalie:null,
+    period:1, isFinal:false, notes:""
+  },
+  clock:{seconds:1200,running:false}
+};
+
+/* ---------- NAV ---------- */
+document.querySelectorAll("nav button").forEach(b=>{
+  b.onclick=()=>{
+    document.querySelectorAll("nav button").forEach(x=>x.classList.remove("active"));
+    document.querySelectorAll("section").forEach(s=>s.classList.remove("active"));
+    b.classList.add("active");
+    document.getElementById(b.dataset.tab).classList.add("active");
+  };
+});
+
+/* ---------- SEASONS ---------- */
+function renderSeasons(){
+  seasonList.innerHTML="";
+  seasons.forEach(s=>{
+    const li=document.createElement("li");
+    li.textContent=s;
+    li.onclick=()=>{
+      activeSeason=s;
+      LS.setItem("activeSeason",s);
+    };
+    seasonList.appendChild(li);
+  });
+}
+addSeason.onclick=()=>{
+  if(!newSeason.value) return;
+  seasons.push(newSeason.value);
+  LS.setItem("seasons",JSON.stringify(seasons));
+  newSeason.value="";
+  renderSeasons();
+};
+
+/* ---------- TEAMS ---------- */
+function renderTeams(){
+  teamList.innerHTML="";
+  teams.forEach(t=>{
+    const div=document.createElement("div");
+    div.className="box";
+    div.innerHTML=`
+      <b>${t.name} (${t.abbr})</b><br>
+      <input placeholder="Player" id="p${t.id}">
+      <input placeholder="#" id="n${t.id}" style="width:50px">
+      <label><input type="checkbox" id="g${t.id}">G</label>
+      <button>Add Player</button>
+      <ul>${t.roster.map(p=>`<li>${p.num} ${p.name}${p.goalie?" (G)":""}</li>`).join("")}</ul>
+    `;
+    div.querySelector("button").onclick=()=>{
+      t.roster.push({
+        name:div.querySelector(`#p${t.id}`).value,
+        num:div.querySelector(`#n${t.id}`).value,
+        goalie:div.querySelector(`#g${t.id}`).checked
+      });
+      LS.setItem("teams",JSON.stringify(teams));
+      renderTeams();
+      populateTeamSelects();
+    };
+    teamList.appendChild(div);
+  });
+}
+addTeam.onclick=()=>{
+  teams.push({id:Date.now(),name:teamName.value,abbr:teamAbbr.value,roster:[]});
+  LS.setItem("teams",JSON.stringify(teams));
+  teamName.value=teamAbbr.value="";
+  renderTeams();
+  populateTeamSelects();
+};
+
+/* ---------- GAME SETUP ---------- */
+function populateTeamSelects(){
+  [homeTeam,awayTeam].forEach(sel=>{
+    sel.innerHTML="<option></option>";
+    teams.forEach(t=>{
+      const o=document.createElement("option");
+      o.value=t.id;
+      o.textContent=`${t.name} (${t.abbr})`;
+      sel.appendChild(o);
+    });
+  });
+}
+homeTeam.onchange=()=>populateGoalies(homeTeam.value,homeGoalie);
+awayTeam.onchange=()=>populateGoalies(awayTeam.value,awayGoalie);
+
+function populateGoalies(teamId,sel){
+  sel.innerHTML="<option></option>";
+  const t=teams.find(x=>x.id==teamId);
+  if(!t) return;
+  t.roster.filter(p=>p.goalie).forEach(g=>{
+    const o=document.createElement("option");
+    o.value=g.name;
+    o.textContent=g.name;
+    sel.appendChild(o);
+  });
+}
+
+/* ---------- GAME FLOW ---------- */
+function save(){ LS.setItem("activeGame",JSON.stringify(state)); }
+
+clockToggle.onclick=()=>{
+  if(state.game.isFinal) return;
+  state.clock.running=!state.clock.running;
+  if(state.clock.running){
+    state.timer=setInterval(()=>{
+      if(state.clock.seconds>0){
+        state.clock.seconds--;
+        renderClock();
+        save();
+      }
+    },1000);
+  } else clearInterval(state.timer);
+};
+
+advancePeriod.onclick=()=>{
+  if(state.game.isFinal) return;
+  if(state.game.period===3) state.game.period="OT";
+  else if(state.game.period==="OT") state.game.isFinal=true;
+  else state.game.period++;
+  renderStatus();
+  save();
+};
+
+endGame.onclick=()=>{
+  state.game.isFinal=true;
+  renderStatus();
+  save();
+};
+
+/* ---------- FINALIZE / NEW GAME ---------- */
+finalizeBox.onclick=()=>{
+  if(!state.game.isFinal) return;
+  startNewGame.style.display="block";
+};
+startNewGame.onclick=()=>{
+  LS.removeItem("activeGame");
+  location.reload();
+};
+
+/* ---------- RENDER ---------- */
+function renderClock(){
+  const m=String(Math.floor(state.clock.seconds/60)).padStart(2,"0");
+  const s=String(state.clock.seconds%60).padStart(2,"0");
+  clock.textContent=`${m}:${s}`;
+}
+function renderStatus(){
+  gameStatus.textContent=state.game.isFinal?"FINAL":
+    state.game.period==="OT"?"Overtime":`Period ${state.game.period}`;
+}
+
+renderSeasons();
+renderTeams();
+populateTeamSelects();
+renderClock();
+renderStatus();
+</script>
+
+</body>
+</html>
